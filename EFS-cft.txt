@@ -1,0 +1,508 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CFT Template for provisioning EFS",
+  "Parameters": {
+    "PerformanceMode": {
+      "Description": "Performance Mode",
+      "Type": "String",
+      "Default": "generalPurpose",
+      "AllowedValues": [
+        "generalPurpose",
+        "maxIO"
+      ]
+    },
+    "Status": {
+      "Type": "String",
+      "Default": "development",
+      "AllowedValues": [
+        "development",
+        "qa",
+        "UAT",
+        "production",
+        "preproduction"
+      ]
+    },
+    "Encryption": {
+      "Type": "String",
+      "Default": "True",
+      "AllowedValues": [
+        "True",
+        "False"
+      ]
+    },
+    "EFSKEY": {
+      "Description": "Encryption key for EFS",
+      "Type": "String",
+      "Default": "TEST"
+    },
+    "DaysToTransitiontoIA": {
+      "Description": "Transition files from Standard to Standard-Infrequent Access",
+      "Type": "String",
+      "Default": "AFTER_90_DAYS",
+      "AllowedValues": [
+        "AFTER_1_DAY",
+        "AFTER_7_DAYS",
+        "AFTER_14_DAYS",
+        "AFTER_30_DAYS",
+        "AFTER_60_DAYS",
+        "AFTER_90_DAYS"
+      ]
+    },
+    "ThroughputModeType": {
+      "Description": "Specifies the throughput mode for the file system. The mode can be bursting, provisioned, or elastic",
+      "Type": "String",
+      "Default": "bursting",
+      "AllowedValues": [
+        "bursting",
+        "elastic",
+        "provisioned"
+      ]
+    },
+    "ProvisionedThroughputInMibps": {
+      "Type": "String",
+      "Description": "If provisioned ThroughputMode is selected above, this value will be used, otherwise it will be ignored. Must be a double.",
+      "AllowedPattern": "^[0-9]+\\.[0-9]+$",
+      "Default": "0.0"
+    },
+    "SiteName": {
+      "Description": "Which Site/Application to build (does not apply to all roles)",
+      "Type": "String",
+      "Default": "none"
+    },
+    "OperatorEMail": {
+      "Description": "EMail address to notify if there are any scaling operations",
+      "Type": "String",
+      "AllowedPattern": "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)",
+      "ConstraintDescription": "must be a valid email address.",
+      "Default": "siddhesh_k@hdfclife.com"
+    },
+    "Project": {
+      "Description": "Define which project the EFS is provisioned",
+      "Type": "String",
+      "AllowedValues": [
+        "TEST"
+      ]
+    },
+    "Application": {
+      "Description": "Define which application the EFS is provisioned",
+      "Type": "String",
+      "AllowedValues": [
+        "TEST"
+      ]
+    },
+    "ProjectOwner": {
+      "Description": "Define which project owner the EFS is provisioned",
+      "Type": "String",
+      "Default": "TEST",
+      "AllowedValues": [
+        "TEST"
+      ]
+    },
+    "WantAccessPointAttached": {
+      "Type": "String",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "WantTransitionToIA": {
+      "Type": "String",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    }
+  },
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [
+        {
+          "Label": {
+            "default": "EFS configuration"
+          },
+          "Parameters": [
+            "SiteName",
+            "Status",
+            "PerformanceMode",
+            "ProvisionedThroughputInMibps"
+          ]
+        }
+      ]
+    }
+  },
+  "Conditions": {
+    "AccessPointNeeded": {
+      "Fn::Equals": [
+        {
+          "Ref": "WantAccessPointAttached"
+        },
+        "yes"
+      ]
+    },
+    "ProvisionedThroughputCondition": {
+      "Fn::Equals": [
+        {
+          "Ref": "ThroughputModeType"
+        },
+        "provisioned"
+      ]
+    },
+    "Transition": {
+      "Fn::Equals": [
+        {
+          "Ref": "WantTransitionToIA"
+        },
+        "yes"
+      ]
+    }
+  },
+  "Resources": {
+    "NotificationTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Ref": "OperatorEMail"
+            },
+            "Protocol": "email"
+          }
+        ]
+      }
+    },
+    "EFS": {
+      "Type": "AWS::EFS::FileSystem",
+      "Properties": {
+        "Encrypted": {
+          "Ref": "Encryption"
+        },
+        "KmsKeyId": {
+          "Ref": "EFSKEY"
+        },
+        "LifecyclePolicies": [
+          {
+            "Fn::If": [
+              "Transition",
+              {
+                "TransitionToIA": {
+                  "Ref": "DaysToTransitiontoIA"
+                }
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
+          }
+        ],
+        "ThroughputMode": {
+          "Ref": "ThroughputModeType"
+        },
+        "ProvisionedThroughputInMibps": {
+          "Fn::If": [
+            "ProvisionedThroughputCondition",
+            {
+              "Ref": "ProvisionedThroughputInMibps"
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "FileSystemTags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${SiteName}"
+            }
+          },
+          {
+            "Key": "hdfclife:cloudformation:stack-id",
+            "Value": {
+              "Ref": "AWS::StackId"
+            }
+          },
+          {
+            "Key": "hdfclife:cloudformation:stack-name",
+            "Value": {
+              "Ref": "AWS::StackName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Status"
+            }
+          },
+          {
+            "Key": "Platform",
+            "Value": "EFS"
+          },
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "Project"
+            }
+          },
+          {
+            "Key": "Application",
+            "Value": {
+              "Ref": "Application"
+            }
+          },
+          {
+            "Key": "Owner",
+            "Value": {
+              "Ref": "ProjectOwner"
+            }
+          }
+        ],
+        "PerformanceMode": {
+          "Ref": "PerformanceMode"
+        }
+      }
+    },
+    "VPCInfo": {
+      "Type": "Custom::VPCInfo",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:VPCLookup"
+        }
+      }
+    },
+    "NfsAccessSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Client access provider",
+        "VpcId": {
+          "Fn::GetAtt": [
+            "VPCInfo",
+            "VPCID"
+          ]
+        },
+        "SecurityGroupIngress": []
+      }
+    },
+    "MountTargetSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "EFS  services access",
+        "VpcId": {
+          "Fn::GetAtt": [
+            "VPCInfo",
+            "VPCID"
+          ]
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "0",
+            "ToPort": "65535",
+            "SourceSecurityGroupId": {
+              "Ref": "NfsAccessSecurityGroup"
+            }
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "0",
+            "ToPort": "65535",
+            "SourceSecurityGroupId": {
+              "Ref": "NfsAccessSecurityGroup"
+            }
+          }
+        ]
+      }
+    },
+    "EFSMountTarget1": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "EFS"
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "VPCInfo",
+            "BackendSubnet1"
+          ]
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "MountTargetSecurityGroup"
+          }
+        ]
+      }
+    },
+    "EFSMountTarget2": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "EFS"
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "VPCInfo",
+            "BackendSubnet2"
+          ]
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "MountTargetSecurityGroup"
+          }
+        ]
+      }
+    },
+    "EFSMountTarget3": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "EFS"
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "VPCInfo",
+            "BackendSubnet3"
+          ]
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "MountTargetSecurityGroup"
+          }
+        ]
+      }
+    },
+    "AccessPointResource": {
+      "Type": "AWS::EFS::AccessPoint",
+      "Condition": "AccessPointNeeded",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "EFS"
+        },
+        "PosixUser": {
+          "Uid": "1001",
+          "Gid": "1001"
+        },
+        "RootDirectory": {
+          "CreationInfo": {
+            "OwnerGid": "1001",
+            "OwnerUid": "1001",
+            "Permissions": "755"
+          },
+          "Path": "/"
+        },
+        "AccessPointTags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${SiteName}-access-point"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Status"
+            }
+          },
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "Project"
+            }
+          },
+          {
+            "Key": "Application",
+            "Value": {
+              "Ref": "Application"
+            }
+          },
+          {
+            "Key": "Owner",
+            "Value": {
+              "Ref": "ProjectOwner"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "FileSystemId": {
+      "Description": "FileSystemId",
+      "Value": {
+        "Ref": "EFS"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:FileSystemId"
+        }
+      }
+    },
+    "EFSMountTarget1": {
+      "Description": "EFS Mount Target1",
+      "Value": {
+        "Ref": "EFSMountTarget1"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MountTarget1"
+        }
+      }
+    },
+    "EFSMountTarget2": {
+      "Description": "EFS Mount Target2",
+      "Value": {
+        "Ref": "EFSMountTarget2"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MountTarget2"
+        }
+      }
+    },
+    "EFSMountTarget3": {
+      "Description": "EFS Mount Target3",
+      "Value": {
+        "Ref": "EFSMountTarget3"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MountTarget3"
+        }
+      }
+    },
+    "VPCID": {
+      "Description": "The Amazon EC2 VPC ID.",
+      "Value": {
+        "Fn::GetAtt": [
+          "VPCInfo",
+          "VPCID"
+        ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:VPCID"
+        }
+      }
+    },
+    "MountTargetSecurityGroup": {
+      "Description": "Security Group assigned to the EFS, modify to allow traffic globally",
+      "Value": {
+        "Ref": "MountTargetSecurityGroup"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MountTargetSecurityGroup"
+        }
+      }
+    },
+    "NfsAccessSecurityGroup": {
+      "Description": "Security Group to assign instances to, pass it as DefaultSecurityGroups to other stack",
+      "Value": {
+        "Ref": "NfsAccessSecurityGroup"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:SecurityGroup"
+        }
+      }
+    }
+  }
+}
